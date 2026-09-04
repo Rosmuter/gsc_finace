@@ -1,4 +1,7 @@
 import { useEffect, useState } from "react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
 import { supabase } from "./lib/supabase";
 import { fetchSites, fetchOperations, createOperation, deleteOperation } from "./services/operations";
 import Login from "./pages/Login";
@@ -188,6 +191,81 @@ export default function App() {
 
   const hasActiveFilters = filterSite !== 'ALL' || filterType !== 'ALL' || dateDebut || dateFin || searchQuery || sortBy !== 'date_desc';
 
+  const formatAmount = (value) => Number(value || 0).toLocaleString('fr-FR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+  const exportRows = filteredOps.map((op) => [
+    op.date || '',
+    op.site || '',
+    op.type || '',
+    op.libelle || '',
+    Number(op.montant || 0),
+  ]);
+
+  const exportFileSuffix = () => new Date().toISOString().slice(0, 10);
+
+  function handleExportExcel() {
+    const sheetRows = [
+      ['GSC Eastcastle — Journal des opérations'],
+      [`Export du ${new Date().toLocaleDateString('fr-FR')}`],
+      [`Période : ${dateDebut || 'Début'} au ${dateFin || 'Aujourd’hui'}`],
+      [],
+      ['Date', 'Site', 'Type', 'Libellé', 'Montant (USD)'],
+      ...exportRows,
+      [],
+      ['Total reçus', '', '', '', totalRecu],
+      ['Total dépenses', '', '', '', totalDepense],
+      ['Solde', '', '', '', soldePC],
+    ];
+    const worksheet = XLSX.utils.aoa_to_sheet(sheetRows);
+    worksheet['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 4 } },
+    ];
+    worksheet['!cols'] = [
+      { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 48 }, { wch: 18 },
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Opérations');
+    XLSX.writeFile(workbook, `gsc-operations-${exportFileSuffix()}.xlsx`);
+  }
+
+  function handleExportPdf() {
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    doc.setFontSize(16);
+    doc.text('GSC Eastcastle — Journal des opérations', 14, 16);
+    doc.setFontSize(9);
+    doc.setTextColor(90);
+    doc.text(`Export du ${new Date().toLocaleDateString('fr-FR')} · ${filteredOps.length} opération(s)`, 14, 22);
+    doc.text(`Période : ${dateDebut || 'Début'} au ${dateFin || 'Aujourd’hui'}`, 14, 27);
+
+    autoTable(doc, {
+      startY: 32,
+      head: [['Date', 'Site', 'Type', 'Libellé', 'Montant (USD)']],
+      body: exportRows.map(([date, site, type, label, amount]) => [date, site, type, label, formatAmount(amount)]),
+      foot: [
+        ['Total reçus', '', '', '', `+${formatAmount(totalRecu)}`],
+        ['Total dépenses', '', '', '', `-${formatAmount(totalDepense)}`],
+        ['Solde', '', '', '', formatAmount(soldePC)],
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [15, 26, 61] },
+      footStyles: { fillColor: [241, 245, 249], textColor: [15, 26, 61], fontStyle: 'bold' },
+      styles: { fontSize: 8, cellPadding: 2 },
+      columnStyles: { 3: { cellWidth: 110 }, 4: { halign: 'right' } },
+      didDrawPage: () => {
+        doc.setFontSize(8);
+        doc.setTextColor(120);
+        doc.text(`Page ${doc.getNumberOfPages()}`, 282, 204, { align: 'right' });
+      },
+    });
+    doc.save(`gsc-operations-${exportFileSuffix()}.pdf`);
+  }
+
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center font-bold text-slate-500">Chargement de GSC Eastcastle...</div>;
   }
@@ -215,8 +293,26 @@ export default function App() {
           )}
         </div>
 
-        <div className="text-xs font-bold text-slate-500">
-          {filteredOps.length} opération(s) affichée(s)
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="text-xs font-bold text-slate-500 mr-1">
+            {filteredOps.length} opération(s) affichée(s)
+          </span>
+          <button
+            type="button"
+            onClick={handleExportExcel}
+            className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 transition hover:bg-emerald-100"
+            aria-label="Télécharger les opérations filtrées en fichier Excel"
+          >
+            ↓ Excel
+          </button>
+          <button
+            type="button"
+            onClick={handleExportPdf}
+            className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100"
+            aria-label="Télécharger les opérations filtrées en PDF"
+          >
+            ↓ PDF
+          </button>
         </div>
       </div>
 
